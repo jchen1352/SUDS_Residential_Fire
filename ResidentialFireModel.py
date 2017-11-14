@@ -17,7 +17,7 @@ from sklearn import svm
 # Reading plidata
 plidata = pd.read_csv('pli.csv',encoding = 'utf-8',dtype={'STREET_NUM':'str','STREET_NAME':'str'})
 #Reading city of Pittsburgh dataset
-pittdata = pd.read_csv('pittdata2.csv',dtype={'PROPERTYADDRESS':'str','PROPERTYHOUSENUM':'str','STATEDESC':'str',
+pittdata = pd.read_csv('pittdata.csv',dtype={'PROPERTYADDRESS':'str','PROPERTYHOUSENUM':'str','STATEDESC':'str',
                                               'NEIGHDESC':'str','DEEDPAGE':'str','MABT':'str','TAXFULLADDRESS4':'str',
                                               'CHANGENOTICEADDRESS4':'str','STYLE':'str','ALT_ID':'str'})
 #Reading 311 file
