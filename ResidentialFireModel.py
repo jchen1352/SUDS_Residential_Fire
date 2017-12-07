@@ -17,7 +17,7 @@ from sklearn import svm
 # Reading plidata
 plidata = pd.read_csv('pli.csv',encoding = 'utf-8',dtype={'STREET_NUM':'str','STREET_NAME':'str'})
 #Reading city of Pittsburgh dataset
-pittdata = pd.read_csv('pittdata2.csv',dtype={'PROPERTYADDRESS':'str','PROPERTYHOUSENUM':'str','STATEDESC':'str',
+pittdata = pd.read_csv('pittdata.csv',dtype={'PROPERTYADDRESS':'str','PROPERTYHOUSENUM':'str','STATEDESC':'str',
                                               'NEIGHDESC':'str','DEEDPAGE':'str','MABT':'str','TAXFULLADDRESS4':'str',
                                               'CHANGENOTICEADDRESS4':'str','STYLE':'str','ALT_ID':'str'})
 #Reading 311 file
@@ -397,6 +397,8 @@ del test_data['NEIGHCODE']
 del test_data['TAXDESC']
 del test_data['USEDESC']
 del test_data['fire_year']
+test_address = test_data['PROPERTYADDRESS']
+test_housenum = test_data['PROPERTYHOUSENUM']
 del test_data['PROPERTYADDRESS']
 del test_data['PROPERTYHOUSENUM']
 
@@ -540,7 +542,7 @@ except:
 # Getting the probability scores
 predictions = model.predict_proba(X_test)
 
-addresses = test_data['PROPERTYHOUSENUM'] + ' ' + test_data['PROPERTYADDRESS']
+addresses = test_housenum + ' ' + test_address
 
 # Addresses with fire and risk score
 risk = []
