@@ -1,31 +1,18 @@
+#This script creates 3 files (pittdata_blocks.csv, plidata_blocks.csv, fire_incident_blocks.csv)
+#that clean the data and convert spatial data to census tracts and blocks
+
 import pandas as pd
 import numpy as np
-import datetime as dt
 
-#Date to split data between test and train
-date_split = dt.date(2016, 7, 1)
-
-#pli: Permits, Licenses, and Inspections
-plidata = pd.read_csv('pli.csv',encoding='utf-8',dtype={'STREET_NUM':'str', 'STREET_NAME':'str'})
-plidata = plidata[['PARCEL','INSPECTION_DATE','INSPECTION_RESULT','VIOLATION']]
-
-#One-hot encoding inspection result and violations
-inspection_results = pd.get_dummies(plidata['INSPECTION_RESULT'])
-violations = plidata['VIOLATION'].str.get_dummies(sep=' :: ')
-plidata = pd.concat([plidata, inspection_results, violations], axis=1)
-plidata = plidata.drop(['INSPECTION_RESULT','VIOLATION'], axis=1)
-del inspection_results
-del violations
-
-#Separate by date
-plidata['INSPECTION_DATE'] = pd.to_datetime(plidata['INSPECTION_DATE'])
-plidata_old = plidata[plidata['INSPECTION_DATE'] < date_split]
-plidata_new = plidata[plidata['INSPECTION_DATE'] >= date_split]
-del plidata
-
-#Aggregate data from same parcel
-plidata_old = plidata_old.groupby('PARCEL').aggregate(np.sum)
-plidata_new = plidata_new.groupby('PARCEL').aggregate(np.sum)
+#read parcel data (matches parcels to census tract and block group
+parcel_blocks = pd.read_csv('parcels.csv', encoding='utf-8')
+#keep only parcel, tract, and block group
+parcel_blocks = parcel_blocks[['PIN', 'TRACTCE10', 'BLOCKCE10']]
+parcel_blocks['BLOCKCE10'] = parcel_blocks['BLOCKCE10'].astype(str).str[0]
+#ignore bad parcels
+parcel_blocks = parcel_blocks[parcel_blocks['PIN'] != ' ']
+parcel_blocks = parcel_blocks[parcel_blocks['PIN'] != 'COMMON GROUND']
+parcel_blocks = parcel_blocks[~parcel_blocks['PIN'].str.match('.*County')]
 
 #Process pittdata
 pittdata = pd.read_csv('pittdata.csv',dtype={'PROPERTYADDRESS':'str','PROPERTYHOUSENUM':'str',
@@ -35,35 +22,51 @@ pittdata = pd.read_csv('pittdata.csv',dtype={'PROPERTYADDRESS':'str','PROPERTYHO
                                              'STYLE':'str','ALT_ID':'str'})
 
 #include only residential data
-pittdata = pittdata[pittdata['STATEDESC']=='RESIDENTIAL']
+pittdata = pittdata[pittdata['STATEDESC'] == 'RESIDENTIAL']
+#ignore data without house number
 pittdata = pittdata[pittdata['PROPERTYHOUSENUM'] != '0']
 
-#drop columns with less than 15% data
-pittdata = pittdata.dropna(thresh=int(pittdata.shape[0]*.15), axis=1)
+#matches parcels to street/number addresses
+address_parcels = pittdata[['PARID','PROPERTYADDRESS','PROPERTYHOUSENUM']]
 
-#drop columns with only one value
-#drop columns that end in 'DESC' because they are the same as another column
-#drop several other unnecessary columns
-del_columns = ['PROPERTYOWNER','AGENT','TAXFULLADDRESS1','TAXFULLADDRESS2','TAXFULLADDRESS3',
-               'TAXFULLADDRESS4','CHANGENOTICEADDRESS1','CHANGENOTICEADDRESS2',
-               'CHANGENOTICEADDRESS3','CHANGENOTICEADDRESS4']
-pitt_temp = pittdata
-for col in pittdata.columns:
-    if col in del_columns or col.endswith('DESC') or len(pittdata[col].unique()) == 1:
-        pitt_temp = pitt_temp.drop(col, axis=1)
-pittdata = pitt_temp
-del pitt_temp
+#picked out necessary columns
+pittdata = pittdata[['PARID','PROPERTYHOUSENUM','PROPERTYADDRESS','MUNIDESC','SCHOOLDESC','NEIGHCODE',
+                     'TAXDESC','OWNERDESC','USEDESC','LOTAREA','SALEPRICE','FAIRMARKETBUILDING','FAIRMARKETLAND']]
 
-#merging pli with city of pitt
-plipca_old = pd.merge(pittdata, plidata_old, how = 'left', left_on =['PARID'], right_index=True)
-plipca_new = pd.merge(pittdata, plidata_new, how = 'left', left_on =['PARID'], right_index=True)
-del pittdata
-del plidata_old
-del plidata_new
+#convert pittdata to census block level
+pittdata = pd.merge(pittdata, parcel_blocks, how='left', left_on=['PARID'], right_on=['PIN'])
+#drop extra columns
+pittdata = pittdata.drop(['PARID','PIN', 'PROPERTYHOUSENUM','PROPERTYADDRESS'], axis=1)
 
-#drop duplicate addresses, don't really care about lost data because aggregating at census block level
-plipca_old = plipca_old.drop_duplicates(subset=['PROPERTYADDRESS','PROPERTYHOUSENUM'])
-plipca_new = plipca_new.drop_duplicates(subset=['PROPERTYADDRESS','PROPERTYHOUSENUM'])
+#group by blocks
+grouped = pittdata.groupby(['TRACTCE10','BLOCKCE10'])
+#change the '-DESC' columns to the most common in each group (block)
+#change the other columns to the mean
+max_count = lambda x:x.value_counts().index[0]
+pittdata_blocks = grouped.agg({
+    'MUNIDESC':max_count,'SCHOOLDESC':max_count,'NEIGHCODE':max_count,
+    'TAXDESC':max_count,'OWNERDESC':max_count,'USEDESC':max_count,'LOTAREA':np.mean,
+    'SALEPRICE':np.mean,'FAIRMARKETBUILDING':np.mean,'FAIRMARKETLAND':np.mean
+})
+
+#write cleaned pittdata at block level
+pittdata_blocks.to_csv('pittdata_blocks.csv')
+
+#pli: Permits, Licenses, and Inspections
+plidata = pd.read_csv('pli.csv',encoding='utf-8',dtype={'STREET_NUM':'str', 'STREET_NAME':'str'})
+plidata = plidata[['PARCEL','INSPECTION_DATE','INSPECTION_RESULT','VIOLATION']]
+
+plidata['INSPECTION_DATE'] = pd.to_datetime(plidata['INSPECTION_DATE'])
+
+#get only residential data
+plidata = pd.merge(plidata, address_parcels[['PARID']], how='inner', left_on=['PARCEL'], right_on=['PARID'])
+#get census block from parcel
+plidata = pd.merge(plidata, parcel_blocks, how='left', left_on=['PARCEL'], right_on=['PIN'])
+#drop extra columns
+plidata = plidata.drop(['PARCEL','PARID','PIN'], axis=1)
+#write cleaned plidata at census block level
+#NOTE: Reason for not merging plidata with pittdata: plidata is temporal while pittdata is constant
+plidata.to_csv('plidata_blocks.csv')
 
 #loading fire incidents csvs
 #IMPORTANT: Fire_Incidents_Pre14.csv has a bad byte at position 131, delete it to run code
@@ -113,7 +116,7 @@ fire_historical = fire_historical.drop(del_columns, axis=1)
 fire_historical = fire_historical[fire_historical['number'] != '']
 fire_historical = fire_historical[fire_historical['street'] != '']
 
-# making the fire column with all type 100s as fires
+#making the fire column with all type 100s as fires
 fire_historical['fire'] = fire_historical['inci_type'].astype(str).map(lambda x:1 if x[0]=='1' else 0)
 
 #converting to date time
@@ -122,66 +125,16 @@ fire_historical['alm_dttm'] = pd.to_datetime(fire_historical['alm_dttm'])
 
 fire_historical = fire_historical.drop_duplicates()
 
-#split fire_historical by date
-fire_historical_old = fire_historical[fire_historical['alm_dttm'] < date_split]
-fire_historical_new = fire_historical[fire_historical['alm_dttm'] >= date_split]
-del fire_historical
+#first convert from addresses to parcels
+fire_historical = pd.merge(fire_historical, address_parcels, how='left',
+                           left_on=['street','number'], right_on=['PROPERTYADDRESS','PROPERTYHOUSENUM'])
+#then convert from parcels to census blocks
+fire_historical = pd.merge(fire_historical, parcel_blocks, how='left', left_on=['PARID'], right_on=['PIN'])
+#drop extra columns
+fire_historical = fire_historical.drop(['number','street','street2','PARID','PROPERTYADDRESS',
+                                        'PROPERTYHOUSENUM','PIN'], axis=1)
+#drop data without block or tract (this drops non-residential data)
+fire_historical = fire_historical.dropna(subset=['TRACTCE10','BLOCKCE10'])
 
-#combining addresses so number and street have no duplicates
-#experiment with fire column being any fire or count fires
-fire_historical_old['fire_count'] = fire_historical_old.groupby(['number','street'])['fire'].transform(np.sum)
-fire_historical_new['fire_count'] = fire_historical_new.groupby(['number','street'])['fire'].transform(np.sum)
-
-#not sure if other columns are necessary
-fire_historical_old = fire_historical_old[['number','street','fire_count']]
-fire_historical_new = fire_historical_new[['number','street','fire_count']]
-fire_historical_old = fire_historical_old.drop_duplicates(subset=['number','street'])
-fire_historical_new = fire_historical_new.drop_duplicates(subset=['number','street'])
-
-#merge with plipca data
-pcafire_old = pd.merge(plipca_old, fire_historical_old, how='left',
-                       left_on=['PROPERTYADDRESS','PROPERTYHOUSENUM'], right_on=['street','number'])
-pcafire_new = pd.merge(plipca_new, fire_historical_new, how='left',
-                       left_on=['PROPERTYADDRESS','PROPERTYHOUSENUM'], right_on=['street','number'])
-del plipca_old
-del plipca_new
-pcafire_old = pcafire_old.drop(['street','number'], axis=1)
-pcafire_new = pcafire_new.drop(['street','number'], axis=1)
-
-#read parcel data
-parceldata = pd.read_csv('parcels.csv', encoding='utf-8')
-#keep only parcel, tract, and block group
-parceldata = parceldata[['PIN','TRACTCE10','BLOCKCE10']]
-parceldata['BLOCKCE10'] = parceldata['BLOCKCE10'].astype(str).str[0]
-#ignore bad parcels
-parceldata = parceldata[parceldata['PIN'] != ' ']
-parceldata = parceldata[parceldata['PIN'] != 'COMMON GROUND']
-parceldata = parceldata[~parceldata['PIN'].str.match('.*County')]
-
-#merge with pcafire
-#TODO: use other columns of pcafire from pittdata instead of dropping
-del_columns = ['PROPERTYUNIT','PROPERTYZIP','MUNICODE','SCHOOLCODE','NEIGHCODE','TAXCODE',
-               'OWNERCODE','USECODE','LOTAREA','HOMESTEADFLAG','SALEDATE','SALEPRICE',
-               'SALECODE','DEEDBOOK','DEEDPAGE','COUNTYBUILDING','COUNTYLAND','COUNTYTOTAL',
-               'LOCALBUILDING','LOCALLAND','LOCALTOTAL','FAIRMARKETBUILDING','FAIRMARKETLAND',
-               'FAIRMARKETTOTAL','STYLE','STORIES','YEARBLT','EXTERIORFINISH','ROOF','BASEMENT',
-               'GRADE','CONDITION','TOTALROOMS','BEDROOMS','FULLBATHS','HALFBATHS','HEATINGCOOLING',
-               'FIREPLACES','ATTACHEDGARAGES','FINISHEDLIVINGAREA','CARDNUMBER']
-pcafire_old = pcafire_old.drop(del_columns, axis=1)
-pcafire_new = pcafire_new.drop(del_columns, axis=1)
-
-#merge parcel data with fires
-parcel_fires_old = pd.merge(parceldata, pcafire_old, how='left', left_on='PIN', right_on='PARID')
-parcel_fires_new = pd.merge(parceldata, pcafire_new, how='left', left_on='PIN', right_on='PARID')
-blocks = parcel_fires_old.groupby(['TRACTCE10','BLOCKCE10'])
-parcel_fires_old = blocks.aggregate(np.sum)
-blocks = parcel_fires_new.groupby(['TRACTCE10','BLOCKCE10'])
-parcel_fires_new = blocks.aggregate(np.sum)
-parcel_fires_old['fire_count'] = parcel_fires_old['fire_count'].fillna(0)
-parcel_fires_new['fire_count'] = parcel_fires_new['fire_count'].fillna(0)
-
-#write cleaned data
-#contains plidata and fire count
-#may include pittdata in the future
-parcel_fires_old.to_csv('fires_old.csv')
-parcel_fires_new.to_csv('fires_new.csv')
+#write cleaned fire incident data at census block level
+fire_historical.to_csv('fire_incident_blocks.csv')
