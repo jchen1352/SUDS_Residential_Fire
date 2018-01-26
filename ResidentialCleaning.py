@@ -8,7 +8,8 @@ import numpy as np
 parcel_blocks = pd.read_csv('parcels.csv', encoding='utf-8')
 #keep only parcel, tract, and block group
 parcel_blocks = parcel_blocks[['PIN', 'TRACTCE10', 'BLOCKCE10']]
-parcel_blocks['BLOCKCE10'] = parcel_blocks['BLOCKCE10'].astype(str).str[0]
+#get first digit of block, convert to int
+parcel_blocks['BLOCKCE10'] = parcel_blocks['BLOCKCE10'].astype(str).str[0].astype(float)
 #ignore bad parcels
 parcel_blocks = parcel_blocks[parcel_blocks['PIN'] != ' ']
 parcel_blocks = parcel_blocks[parcel_blocks['PIN'] != 'COMMON GROUND']
@@ -48,9 +49,43 @@ pittdata_blocks = grouped.agg({
     'TAXDESC':max_count,'OWNERDESC':max_count,'USEDESC':max_count,'LOTAREA':np.mean,
     'SALEPRICE':np.mean,'FAIRMARKETBUILDING':np.mean,'FAIRMARKETLAND':np.mean
 })
+#reset index to columns
+pittdata_blocks = pittdata_blocks.reset_index(level=[0,1])
+
+def clean_acs(df):
+    #Use descriptive names in first row
+    df.columns = df.loc[0]
+    df = df.drop(0)
+    df = df.drop(['Id', 'Id2'], axis=1)
+    #Extract census block and tract
+    df[['BLOCKCE10', 'TRACTCE10']] = df['Geography'].str.extract(
+        'Block Group (\d), Census Tract (\d+\.?\d*)')
+    df = df.drop(['Geography'], axis=1)
+    #Drop first two columns since they only contain totals
+    df = df.drop(df.columns[[0,1]], axis=1)
+    #Drop margin of errors
+    df = df.drop(df.columns[df.columns.str.startswith('Margin')], axis=1)
+    #Convert to numbers
+    df['BLOCKCE10'] = df['BLOCKCE10'].astype('float')
+    df['TRACTCE10'] = df['TRACTCE10'].astype('float')
+    #Multiply tract by 100 to be consistent with other data
+    df['TRACTCE10'] = df['TRACTCE10'] * 100
+    return df
+
+#Add all acs file names here
+acs_data = ['acs_income.csv','acs_occupancy.csv','acs_year_built.csv','acs_year_moved.csv']
+#Read every csv
+acs_data = map(pd.read_csv, acs_data)
+#Clean every dataset
+acs_data = map(clean_acs, acs_data)
+#Merge datasets together
+acs_data_combined = reduce(lambda x,y:x.merge(y, how='outer', on=['BLOCKCE10','TRACTCE10']), acs_data)
+
+#merge pittdata with acs
+pittacs = pd.merge(pittdata_blocks, acs_data_combined, how='inner', on=['BLOCKCE10','TRACTCE10'])
 
 #write cleaned pittdata at block level
-pittdata_blocks.to_csv('pittdata_blocks.csv')
+pittacs.to_csv('pittdata_blocks.csv')
 
 #pli: Permits, Licenses, and Inspections
 plidata = pd.read_csv('pli.csv',encoding='utf-8',dtype={'STREET_NUM':'str', 'STREET_NAME':'str'})
@@ -72,7 +107,7 @@ plidata.to_csv('plidata_blocks.csv')
 #IMPORTANT: Fire_Incidents_Pre14.csv has a bad byte at position 131, delete it to run code
 fire_pre14 = pd.read_csv('Fire_Incidents_Pre14.csv', encoding ='utf-8', dtype={'street': 'str', 'number': 'str'})
 del_columns = ['CALL_NO','inci_id','arv_dttm','alarms','..AGENCY','PRIMARY_UNIT','XCOORD',
-               'YCOORD','CALL_CREATED_DATE','MAP_PAGE','full.code']
+               'YCOORD','CALL_CREATED_DATE','MAP_PAGE','full.code','descript','response_time']
 fire_pre14 = fire_pre14.drop(del_columns, axis=1)
 fire_pre14 = fire_pre14.drop(fire_pre14.columns[0], axis=1)
 
@@ -81,7 +116,7 @@ fire_historical = pd.read_csv('Fire_Incidents_Historical.csv',encoding = 'utf-8'
 del_columns = ['CALL_NO','inci_id','arv_dttm','alarms','pbf_narcan','meds_glucose','meds_epi',
                'meds_nitro','pbf_albut','cpr','car_arr','aed','none','pbf_lift_ass','Med_Assist',
                'Lift_Ref','Card_CPR','AGENCY','PRIMARY_UNIT','XCOORD','YCOORD','LOCATION',
-               'CALL_CREATED_DATE','MAP_PAGE','CURR_DGROUP','REP_DIST','full.code']
+               'CALL_CREATED_DATE','MAP_PAGE','CURR_DGROUP','REP_DIST','full.code','descript','response_time']
 fire_historical = fire_historical.drop(del_columns, axis=1)
 fire_historical = fire_historical.drop(fire_historical.columns[0], axis=1)
 
@@ -135,6 +170,8 @@ fire_historical = fire_historical.drop(['number','street','street2','PARID','PRO
                                         'PROPERTYHOUSENUM','PIN'], axis=1)
 #drop data without block or tract (this drops non-residential data)
 fire_historical = fire_historical.dropna(subset=['TRACTCE10','BLOCKCE10'])
+
+fire_historical = fire_historical.drop_duplicates();
 
 #write cleaned fire incident data at census block level
 fire_historical.to_csv('fire_incident_blocks.csv')
