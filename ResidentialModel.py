@@ -97,7 +97,7 @@ columns = ['OWNERDESC','MUNIDESC','SCHOOLDESC','TAXDESC','USEDESC','NEIGHCODE']
 combined = get_dummies(combined, columns)
 
 #separate into training and testing: testing is last few months
-date_sep = '2016-06-01'
+date_sep = '2016-06-30'
 traindata = combined[combined['alm_dttm'] <= date_sep]
 traindata = traindata.drop(['alm_dttm','TRACTCE10','BLOCKCE10'], axis=1)
 X_train = traindata.drop(['fire'], axis=1)
@@ -108,43 +108,26 @@ testdata = testdata.drop(['alm_dttm','TRACTCE10','BLOCKCE10'], axis=1)
 X_test = testdata.drop(['fire'], axis=1)
 y_test = testdata['fire']
 
-model = XGBClassifier(
-    learning_rate=.13,
-    n_estimators=1500,
-    max_depth=5,
-    min_child_weight=1,
-    gamma=0,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    objective= 'binary:logistic',
-    #nthread=4,
-    seed=27)
+from sklearn.ensemble import AdaBoostClassifier
 
-features = SelectFromModel(model, prefit=True)
-
-print X_train.shape
-train_x_new = features.transform(X_train)
-print train_x_new.shape
-
-# import time
-# start=time.time()
-# print 'before fit'
+model = AdaBoostClassifier(n_estimators = 65, random_state=27)
 model.fit(X_train, y_train)
-# print 'after fit'
-# print 'time elapsed: '+str(time.time()-start)
-pred = model.predict(X_test)
-real = y_test
-cm = confusion_matrix(real, pred)
-print confusion_matrix(real, pred)
 
 from sklearn.metrics import cohen_kappa_score
-kappa = cohen_kappa_score(real, pred)
 
-fpr, tpr, thresholds = metrics.roc_curve(y_test, pred, pos_label=1)
-roc_auc = metrics.auc(fpr, tpr)
+def score(model, X, y):
+    pred = model.predict(X)
+    real = y
+    cm = confusion_matrix(real, pred)
+    print confusion_matrix(real, pred)
 
-print 'Accuracy = ', float(cm[0][0] + cm[1][1])/len(real)
-print 'kappa score = ', kappa
-print 'AUC Score = ', metrics.auc(fpr, tpr)
-print 'recall = ',tpr[1]
-print 'precision = ',float(cm[1][1])/(cm[1][1]+cm[0][1])
+    kappa = cohen_kappa_score(real, pred)
+    fpr, tpr, thresholds = metrics.roc_curve(y_test, pred, pos_label=1)
+    roc_auc = metrics.auc(fpr, tpr)
+    print 'Accuracy = ', float(cm[0][0] + cm[1][1]) / len(real)
+    print 'kappa score = ', kappa
+    print 'AUC Score = ', metrics.auc(fpr, tpr)
+    print 'recall = ', tpr[1]
+    print 'precision = ', float(cm[1][1]) / (cm[1][1] + cm[0][1])
+
+score(model, X_test, y_test)
