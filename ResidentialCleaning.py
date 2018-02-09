@@ -104,21 +104,13 @@ plidata = plidata.drop(['PARCEL','PARID','PIN'], axis=1)
 plidata.to_csv('plidata_blocks.csv')
 
 #loading fire incidents csvs
-#IMPORTANT: Fire_Incidents_Pre14.csv has a bad byte at position 131, delete it to run code
+fire_keep_columns = ['alm_dttm','inci_type','number','st_prefix','street','st_type']
 fire_pre14 = pd.read_csv('Fire_Incidents_Pre14.csv', encoding ='utf-8', dtype={'street': 'str', 'number': 'str'})
-del_columns = ['CALL_NO','inci_id','arv_dttm','alarms','..AGENCY','PRIMARY_UNIT','XCOORD',
-               'YCOORD','CALL_CREATED_DATE','MAP_PAGE','full.code','descript','response_time']
-fire_pre14 = fire_pre14.drop(del_columns, axis=1)
-fire_pre14 = fire_pre14.drop(fire_pre14.columns[0], axis=1)
+fire_pre14 = fire_pre14[fire_keep_columns]
 
 #reading the fire_historicalfile
-fire_historical = pd.read_csv('Fire_Incidents_Historical.csv',encoding = 'utf-8',dtype={'street':'str','number':'str'})
-del_columns = ['CALL_NO','inci_id','arv_dttm','alarms','pbf_narcan','meds_glucose','meds_epi',
-               'meds_nitro','pbf_albut','cpr','car_arr','aed','none','pbf_lift_ass','Med_Assist',
-               'Lift_Ref','Card_CPR','AGENCY','PRIMARY_UNIT','XCOORD','YCOORD','LOCATION',
-               'CALL_CREATED_DATE','MAP_PAGE','CURR_DGROUP','REP_DIST','full.code','descript','response_time']
-fire_historical = fire_historical.drop(del_columns, axis=1)
-fire_historical = fire_historical.drop(fire_historical.columns[0], axis=1)
+fire_historical = pd.read_csv('Fire_Incidents_New.csv',encoding = 'utf-8',dtype={'street':'str','number':'str'})
+fire_historical = fire_historical[fire_keep_columns]
 
 fire_historical = fire_historical.append(fire_pre14, ignore_index=True)
 del fire_pre14
@@ -144,7 +136,7 @@ fire_historical['street'] = street_split.map(lambda x:x[0])
 fire_historical['street2'] = street_split.map(lambda x:x[1] if len(x) > 1 else np.nan)
 
 #dropping unneeded street columns
-del_columns = ['st_prefix','st_type','st_suffix']
+del_columns = ['st_prefix','st_type']
 fire_historical = fire_historical.drop(del_columns, axis=1)
 
 #dropping rows with no number or street
